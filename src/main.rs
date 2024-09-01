@@ -1,5 +1,8 @@
+use std::fmt;
+use std::iter;
 #[allow(unused_imports)]
 use std::net::UdpSocket;
+use std::str::FromStr;
 
 #[derive(Debug, Default)]
 enum OpCode {
@@ -117,7 +120,6 @@ impl Default for DNSHeader {
 }
 
 impl DNSHeader {
-
     /// Build the DNS header network representation
     fn to_bytes(&self) -> [u8; 12] {
         // rfc 1535, sec 4.1.1
@@ -185,6 +187,169 @@ impl DNSHeader {
 
         res
     }
+}
+
+#[derive(Debug, Default)]
+enum RRType {
+    #[default]
+    /// A 1 a host address
+    A,
+    /// NS 2 an authoritative name server
+    NS,
+    /// MD 3 a mail destination (Obsolete - use MX)
+    MD,
+    /// MF 4 a mail forwarder (Obsolete - use MX)
+    MF,
+    /// CNAME 5 the canonical name for an alias
+    CName,
+    /// SOA 6 marks the start of a zone of authority
+    SOA,
+    /// MB 7 a mailbox domain name (EXPERIMENTAL)
+    MB,
+    /// MG 8 a mail group member (EXPERIMENTAL)
+    MG,
+    /// MR 9 a mail rename domain name (EXPERIMENTAL)
+    MR,
+    /// NULL 10 a null RR (EXPERIMENTAL)
+    NULL,
+    /// WKS 11 a well known service description
+    WKS,
+    /// PTR 12 a domain name pointer
+    PTR,
+    /// HINFO 13 host information
+    HInfo,
+    /// MINFO 14 mailbox or mail list information
+    MInfo,
+    /// MX 15 mail exchange
+    MX,
+    /// TXT 16 text strings
+    TXT,
+}
+
+impl RRType {
+    fn to_bytes(&self) -> [u8; 2] {
+        let b: u16 = match self {
+            RRType::A => 1,
+            RRType::NS => 2,
+            RRType::MD => 3,
+            RRType::MF => 4,
+            RRType::CName => 5,
+            RRType::SOA => 6,
+            RRType::MB => 7,
+            RRType::MG => 8,
+            RRType::MR => 9,
+            RRType::NULL => 10,
+            RRType::WKS => 11,
+            RRType::PTR => 12,
+            RRType::HInfo => 13,
+            RRType::MX => 15,
+            RRType::TXT => 16,
+            _ => unreachable!(),
+        };
+        b.to_be_bytes()
+    }
+}
+
+#[derive(Debug, Default)]
+enum Class {
+    #[default]
+    /// IN 1 the Internet
+    IN,
+    /// CS 2 the CSNET class (Obsolete - used only for examples in some obsolete RFCs)
+    CS,
+    /// CH 3 the CHAOS class
+    CH,
+    /// HS 4 Hesiod [Dyer 87]
+    HS,
+}
+impl Class {
+    fn to_bytes(&self) -> [u8; 2] {
+        let b: u16 = match self {
+            Class::IN => 1,
+            Class::CS => 2,
+            Class::CH => 3,
+            Class::HS => 4,
+            _ => unreachable!(),
+        };
+        b.to_be_bytes()
+    }
+}
+
+#[derive(Debug, Default)]
+struct Label {
+    length: u8,
+    value: String,
+}
+
+struct LabelParsingError;
+
+impl FromStr for Label {
+    type Err = LabelParsingError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.contains('.') || s.len() > 255 {
+            Err(LabelParsingError)
+        } else {
+            Ok(Self {
+                length: s.len() as u8,
+                value: s.into(),
+            })
+        }
+    }
+}
+
+impl Label {
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut r = Vec::new();
+        r.push(self.length);
+        r.extend(self.value.as_bytes());
+        r
+    }
+}
+
+#[derive(Debug, Default)]
+struct CName(Vec<Label>);
+
+impl FromStr for CName {
+    type Err = LabelParsingError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let r: Result<Vec<_>, Self::Err> = s.split('.').map(Label::from_str).collect();
+        match r {
+            Ok(c) => Ok(Self(c)),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+impl fmt::Display for CName {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(
+            &self
+                .0
+                .iter()
+                .map(|label| label.value.clone())
+                .collect::<Vec<_>>()
+                .join("."),
+        )
+    }
+}
+
+impl CName {
+    fn to_bytes(&self) -> Vec<u8> {
+        self.0
+            .iter()
+            .flat_map(|l| l.to_bytes())
+            .chain(iter::once(0))
+            .collect()
+    }
+}
+
+#[derive(Debug, Default)]
+struct ResourceRecord {
+    cname: CName,
+    rrtype: RRType,
+    class: Class,
 }
 
 fn main() {
