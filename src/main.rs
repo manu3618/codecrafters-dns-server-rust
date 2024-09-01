@@ -281,6 +281,7 @@ struct Label {
     value: String,
 }
 
+#[derive(Debug)]
 struct LabelParsingError;
 
 impl FromStr for Label {
@@ -350,6 +351,53 @@ struct ResourceRecord {
     cname: CName,
     rrtype: RRType,
     class: Class,
+    ttl: Option<u32>,
+    rdlength: Option<u16>,
+    rddata: Option<String>,
+}
+
+impl ResourceRecord {
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut r = Vec::new();
+        r.extend(self.cname.to_bytes());
+        r.extend(self.rrtype.to_bytes());
+        r.extend(self.class.to_bytes());
+
+        if let Some(_ttl) = self.ttl {
+            // not in question section
+            todo!()
+        }
+        r
+    }
+}
+
+#[derive(Debug, Default)]
+struct DNSPacket {
+    header: DNSHeader,
+    question: Vec<ResourceRecord>,
+    answer: Vec<ResourceRecord>,
+    name_server: Vec<ResourceRecord>,
+    additional: Vec<ResourceRecord>,
+}
+
+impl DNSPacket {
+    fn update_header_counts(&mut self) {
+        self.header.qdcount = self.question.len() as u16;
+        self.header.ancount = self.answer.len() as u16;
+        self.header.nscount = self.name_server.len() as u16;
+        self.header.arcount = self.additional.len() as u16;
+    }
+
+    fn to_bytes(&mut self) -> Vec<u8> {
+        self.update_header_counts();
+        let mut r = Vec::new();
+        r.extend(self.header.to_bytes());
+        r.extend(self.question.iter().flat_map(|rr| rr.to_bytes()));
+        r.extend(self.answer.iter().flat_map(|rr| rr.to_bytes()));
+        r.extend(self.name_server.iter().flat_map(|rr| rr.to_bytes()));
+        r.extend(self.additional.iter().flat_map(|rr| rr.to_bytes()));
+        r
+    }
 }
 
 fn main() {
@@ -364,9 +412,14 @@ fn main() {
         match udp_socket.recv_from(&mut buf) {
             Ok((size, source)) => {
                 println!("Received {} bytes from {}", size, source);
-                let response = DNSHeader::default().to_bytes();
+                let mut response = DNSPacket::default();
+                let rr = ResourceRecord {
+                    cname: CName::from_str("codecrafter.io").unwrap(),
+                    ..ResourceRecord::default()
+                };
+                response.question.push(rr);
                 udp_socket
-                    .send_to(&response, source)
+                    .send_to(&response.to_bytes(), source)
                     .expect("Failed to send response");
             }
             Err(e) => {
